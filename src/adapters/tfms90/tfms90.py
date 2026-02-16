@@ -20,7 +20,8 @@ class TFMS90Adapter(ProtocolAdapter):
         """
         Extract device ID from TFMS90 message.
 
-        Format: $,<token>,<msg_type>,<device_id>,<trip_number>,<timestamp>,<payload>,#?
+        LG Format: $,0,LG,<IMEI>,<firmware>,<sim>,#?
+        Other Format: $,<token>,<msg_type>,<short_device_id>,<trip_number>,<timestamp>,<payload>,#?
         After splitting by '$,': ['', '<token>', '<msg_type>', '<device_id>', ...]
         """
         try:
@@ -35,14 +36,18 @@ class TFMS90Adapter(ProtocolAdapter):
             # parts[0] = '' (before $)
             # parts[1] = token
             # parts[2] = message type
-            # parts[3] = device_id
+            # parts[3] = IMEI (for LG) or short_device_id (for others)
+            msg_type = parts[2].upper()
             device_id = parts[3]
 
-            if device_id:
-                self.logger.info(f"Identified TFMS90 device: {device_id}")
+            if msg_type == 'LG':
+                # LG message contains full IMEI
+                self.logger.info(f"Identified TFMS90 device (LG): IMEI={device_id}")
+                return f"TFMS90_IMEI_{device_id}"
+            else:
+                # Other messages use short_device_id
+                self.logger.info(f"Identified TFMS90 device: short_id={device_id}")
                 return f"TFMS90_{device_id}"
-
-            return None
 
         except Exception as e:
             self.logger.error(f"Error identifying TFMS90 device: {e}")
@@ -80,7 +85,12 @@ class TFMS90Adapter(ProtocolAdapter):
             self.logger.info(f"Message type: {msg_type}, Device: {dev_id}, Token: {token}")
 
             # Parse based on message type
-            if msg_type == 'TD' or msg_type == 'TDA':
+            if msg_type == 'LG':
+                # LG is handled separately for device registration
+                # It doesn't produce telemetry records
+                self.logger.info(f"LG message - device registration handled separately")
+                return []
+            elif msg_type == 'TD' or msg_type == 'TDA':
                 return await self._parse_tracking_data(parts, device_id)
             elif msg_type in ['TS', 'TE']:
                 return await self._parse_trip_event(parts, device_id, msg_type)
@@ -334,6 +344,41 @@ class TFMS90Adapter(ProtocolAdapter):
             self.logger.error(f"Error parsing {msg_type} message: {e}")
             return []
 
+    def parse_login_message(self, data: bytes) -> Optional[dict]:
+        """
+        Parse LG (Login) message and extract device information.
+
+        Format: $,0,LG,<IMEI>,<firmware_version>,<sim_iccid>,#?
+        Example: $,0,LG,867762040399039,2.0.1,89970000000000000000,#?
+
+        Returns dict with: imei, firmware_version, sim_iccid
+        """
+        try:
+            text = data.decode('ascii').strip()
+            if not text.startswith('$'):
+                return None
+
+            parts = text.split(',')
+            if len(parts) < 6:
+                return None
+
+            msg_type = parts[2].upper()
+            if msg_type != 'LG':
+                return None
+
+            login_data = {
+                'imei': parts[3],
+                'firmware_version': parts[4] if len(parts) > 4 else None,
+                'sim_iccid': parts[5] if len(parts) > 5 else None,
+            }
+
+            self.logger.info(f"Parsed LG message: IMEI={login_data['imei']}, FW={login_data['firmware_version']}")
+            return login_data
+
+        except Exception as e:
+            self.logger.error(f"Error parsing LG message: {e}")
+            return None
+
     def _parse_timestamp(self, timestamp_hex: str) -> datetime:
         """Convert hex timestamp to datetime (seconds since 2000-01-01)."""
         try:
@@ -348,15 +393,23 @@ class TFMS90Adapter(ProtocolAdapter):
         """
         Create TFMS90 acknowledgment.
 
-        Format: $,<token>,ACK,<device_id>,<num_records>,#?
+        For LG (Login): $,0,ACK,<short_device_id>,#?
+        For data messages: $,<token>,ACK,<device_id>,<num_records>,#?
         """
         try:
             msg_type = kwargs.get('msg_type', 'TD')
             device_id = kwargs.get('device_id', '000')
             token = kwargs.get('token', '0')
 
-            ack = f"$,{token},ACK,{device_id},{num_records},#?\n"
-            self.logger.debug(f"Created TFMS90 ACK: {ack.strip()}")
+            if msg_type == 'LG':
+                # Login ACK: just send back the assigned short_device_id
+                ack = f"$,0,ACK,{device_id},#?\n"
+                self.logger.info(f"Created LG ACK with short_device_id: {device_id}")
+            else:
+                # Data ACK: include number of records
+                ack = f"$,{token},ACK,{device_id},{num_records},#?\n"
+                self.logger.debug(f"Created TFMS90 ACK: {ack.strip()}")
+
             return ack.encode('ascii')
 
         except Exception as e:

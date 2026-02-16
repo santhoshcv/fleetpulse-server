@@ -80,7 +80,38 @@ class ConnectionHandler:
             self.logger.info(f"Device {self.device_id} connected using {self.protocol} protocol")
             self.is_authenticated = True
 
-            # Register/update device in database
+            # Handle TFMS90 LG (Login) message specially
+            if self.protocol == 'tfms90' and 'IMEI_' in self.device_id:
+                # This is an LG message with IMEI
+                login_data = self.adapter.parse_login_message(data)
+
+                if login_data:
+                    imei = login_data['imei']
+
+                    # Assign or retrieve short_device_id
+                    short_id = await db_client.assign_short_device_id(imei, self.protocol)
+
+                    # Register device with both IMEI and short_device_id
+                    await self._register_tfms90_device(imei, short_id, login_data)
+
+                    # Send LG ACK with short_device_id
+                    ack = self.adapter.create_response(
+                        0,
+                        msg_type='LG',
+                        device_id=str(short_id),
+                        token='0'
+                    )
+                    self.writer.write(ack)
+                    await self.writer.drain()
+                    self.logger.info(f"Sent LG ACK with short_device_id={short_id} to IMEI {imei}")
+
+                    # Read next message (should be data message with short_device_id)
+                    data = await self.reader.read(BUFFER_SIZE)
+
+                    # Re-identify device with short_device_id
+                    self.device_id = self.adapter.identify_device(data)
+
+            # Register/update device in database (for non-LG messages or after LG)
             await self._register_device()
 
             # Send initial acknowledgment based on protocol
@@ -165,6 +196,33 @@ class ConnectionHandler:
 
         except Exception as e:
             self.logger.error(f"Error processing data from {self.device_id}: {e}")
+
+    async def _register_tfms90_device(self, imei: str, short_id: int, login_data: dict):
+        """Register TFMS90 device with IMEI and short_device_id."""
+        try:
+            # Check if device with this IMEI already exists
+            existing_device = await db_client.get_device_by_imei(imei)
+
+            device_data = {
+                "device_id": f"TFMS90_{short_id}",
+                "imei": imei,
+                "short_device_id": short_id,
+                "protocol": self.protocol,
+                "firmware_version": login_data.get('firmware_version'),
+                "sim_iccid": login_data.get('sim_iccid'),
+                "last_seen": datetime.utcnow().isoformat(),
+                "is_active": True,
+            }
+
+            if not existing_device:
+                # New device
+                device_data["created_at"] = datetime.utcnow().isoformat()
+                self.logger.info(f"Registering new TFMS90 device: IMEI={imei}, short_id={short_id}")
+
+            await db_client.upsert_device(device_data)
+
+        except Exception as e:
+            self.logger.error(f"Error registering TFMS90 device {imei}: {e}")
 
     async def _register_device(self):
         """Register or update device in database."""

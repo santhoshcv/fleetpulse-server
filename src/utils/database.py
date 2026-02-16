@@ -68,6 +68,55 @@ class DatabaseClient:
             logger.error(f"Error batch inserting telemetry: {e}")
             raise
 
+    async def get_device_by_imei(self, imei: str) -> Optional[Dict]:
+        """Get device by IMEI."""
+        try:
+            response = self.client.table("devices").select("*").eq("imei", imei).execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            logger.error(f"Error fetching device by IMEI {imei}: {e}")
+            return None
+
+    async def get_next_short_device_id(self, protocol: str) -> int:
+        """Get next available short_device_id for TFMS90 protocol."""
+        try:
+            # Get all devices with short_device_id for this protocol
+            response = self.client.table("devices").select("short_device_id").eq("protocol", protocol).not_.is_("short_device_id", "null").execute()
+
+            if not response.data:
+                # First device, start from 100
+                return 100
+
+            # Find max short_device_id and add 1
+            max_id = max([int(d['short_device_id']) for d in response.data if d.get('short_device_id')])
+            return max_id + 1
+
+        except Exception as e:
+            logger.error(f"Error getting next short_device_id: {e}")
+            # Fallback to a random ID
+            import random
+            return random.randint(100, 999)
+
+    async def assign_short_device_id(self, imei: str, protocol: str) -> int:
+        """Assign a new short_device_id for a device."""
+        try:
+            # Check if device with this IMEI already exists
+            existing = await self.get_device_by_imei(imei)
+
+            if existing and existing.get('short_device_id'):
+                # Device exists, return existing short_device_id
+                logger.info(f"Device {imei} already has short_device_id: {existing['short_device_id']}")
+                return int(existing['short_device_id'])
+
+            # Assign new short_device_id
+            short_id = await self.get_next_short_device_id(protocol)
+            logger.info(f"Assigned new short_device_id {short_id} to IMEI {imei}")
+            return short_id
+
+        except Exception as e:
+            logger.error(f"Error assigning short_device_id: {e}")
+            raise
+
 
 # Global database client instance
 db_client = DatabaseClient()
