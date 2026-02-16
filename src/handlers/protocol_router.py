@@ -34,6 +34,14 @@ class ProtocolRouter:
         Returns:
             Protocol name ('teltonika' or 'tfms90') or None
         """
+        # Debug logging
+        self.logger.info(f"Detecting protocol from {len(data)} bytes")
+        self.logger.info(f"Raw data (first 200 bytes): {data[:200]}")
+        try:
+            self.logger.info(f"Data as text: {data.decode('ascii', errors='ignore')[:200]}")
+        except:
+            pass
+
         if len(data) < 2:
             return None
 
