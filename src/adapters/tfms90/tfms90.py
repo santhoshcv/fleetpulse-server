@@ -153,30 +153,83 @@ class TFMS90Adapter(ProtocolAdapter):
             return []
 
     async def _parse_trip_event(self, parts: List[str], device_id: str, msg_type: str) -> List[TelemetryData]:
-        """Parse TS (Trip Start) or TE (Trip End) message."""
+        """
+        Parse TS (Trip Start) or TE (Trip End) message.
+
+        TS Format: $,0,TS,dev,trip,timestamp,fuel,lat,lon,heading,#?
+        TE Format: $,0,TE,dev,trip,start_ts,end_ts,duration,?,start_fuel,end_fuel,distance,?,?,start_lat,start_lon,end_lat,end_lon,heading,#
+        """
         try:
-            if len(parts) < 11:
-                return []
+            if msg_type == "TS":
+                # Trip Start: simpler format
+                if len(parts) < 10:
+                    return []
 
-            timestamp = self._parse_timestamp(parts[5])
-            latitude = float(parts[6])
-            longitude = float(parts[7])
+                timestamp = self._parse_timestamp(parts[5])
+                fuel = float(parts[6]) if parts[6] else None
+                latitude = float(parts[7])
+                longitude = float(parts[8])
+                heading = float(parts[9]) if len(parts) > 9 and parts[9] else 0.0
 
-            io_elements = {
-                "trip_number": parts[4],
-                "short_device_id": parts[3],
-                "event_type": "trip_start" if msg_type == "TS" else "trip_end",
-            }
+                io_elements = {
+                    "trip_number": parts[4],
+                    "short_device_id": parts[3],
+                    "event_type": "trip_start",
+                    "fuel_level": fuel,
+                }
 
-            return [TelemetryData(
-                device_id=device_id,
-                timestamp=timestamp,
-                latitude=latitude,
-                longitude=longitude,
-                protocol="tfms90",
-                message_type=msg_type,
-                io_elements=io_elements,
-            )]
+                return [TelemetryData(
+                    device_id=device_id,
+                    timestamp=timestamp,
+                    latitude=latitude,
+                    longitude=longitude,
+                    heading=heading,
+                    protocol="tfms90",
+                    message_type=msg_type,
+                    io_elements=io_elements,
+                )]
+
+            else:  # TE - Trip End
+                # Trip End: complex format with start/end data
+                if len(parts) < 18:
+                    return []
+
+                start_timestamp = self._parse_timestamp(parts[5])
+                end_timestamp = self._parse_timestamp(parts[6])
+                duration = int(parts[7]) if parts[7] else 0
+                start_fuel = float(parts[9]) if parts[9] else None
+                end_fuel = float(parts[10]) if parts[10] else None
+                distance = float(parts[11]) if parts[11] else 0.0
+
+                # Use end location as the primary location
+                latitude = float(parts[16])
+                longitude = float(parts[17])
+                heading = float(parts[18]) if len(parts) > 18 and parts[18] and parts[18] != '#' else 0.0
+
+                io_elements = {
+                    "trip_number": parts[4],
+                    "short_device_id": parts[3],
+                    "event_type": "trip_end",
+                    "start_timestamp": start_timestamp.isoformat(),
+                    "end_timestamp": end_timestamp.isoformat(),
+                    "duration_seconds": duration,
+                    "start_fuel": start_fuel,
+                    "end_fuel": end_fuel,
+                    "distance_km": distance,
+                    "start_latitude": float(parts[14]),
+                    "start_longitude": float(parts[15]),
+                }
+
+                return [TelemetryData(
+                    device_id=device_id,
+                    timestamp=end_timestamp,
+                    latitude=latitude,
+                    longitude=longitude,
+                    heading=heading,
+                    protocol="tfms90",
+                    message_type=msg_type,
+                    io_elements=io_elements,
+                )]
 
         except Exception as e:
             self.logger.error(f"Error parsing {msg_type} message: {e}")
@@ -215,21 +268,29 @@ class TFMS90Adapter(ProtocolAdapter):
             return []
 
     async def _parse_fuel_event(self, parts: List[str], device_id: str, msg_type: str) -> List[TelemetryData]:
-        """Parse FLF (Fuel Fill) or FLD (Fuel Drain) message."""
+        """
+        Parse FLF (Fuel Fill) or FLD (Fuel Drain) message.
+
+        Format: $,token,FLF/FLD,dev,trip,timestamp,before_fuel,after_fuel,amount,lat,lon,#?
+        """
         try:
-            if len(parts) < 12:
+            if len(parts) < 11:
                 return []
 
             timestamp = self._parse_timestamp(parts[5])
-            latitude = float(parts[6])
-            longitude = float(parts[7])
-            fuel_level = float(parts[11]) if parts[11] else None
+            fuel_before = float(parts[6]) if parts[6] else None
+            fuel_after = float(parts[7]) if parts[7] else None
+            fuel_amount = float(parts[8]) if parts[8] else None
+            latitude = float(parts[9])
+            longitude = float(parts[10])
 
             io_elements = {
                 "trip_number": parts[4],
                 "short_device_id": parts[3],
                 "event_type": "fuel_fill" if msg_type == "FLF" else "fuel_drain",
-                "fuel_level": fuel_level,
+                "fuel_before": fuel_before,
+                "fuel_after": fuel_after,
+                "fuel_amount": fuel_amount,
             }
 
             return [TelemetryData(
