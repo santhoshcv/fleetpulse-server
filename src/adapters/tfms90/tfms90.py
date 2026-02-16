@@ -72,8 +72,9 @@ class TFMS90Adapter(ProtocolAdapter):
                 self.logger.warning(f"Invalid message format: {message}")
                 return []
 
-            token = parts[0]
-            msg_type = parts[1]
+            # After removing $ and splitting: ,0,TD,171,... -> ['', '0', 'TD', '171', ...]
+            token = parts[1]
+            msg_type = parts[2]
 
             # Route to handler
             handler_name = self.MESSAGE_HANDLERS.get(msg_type)
@@ -109,15 +110,16 @@ class TFMS90Adapter(ProtocolAdapter):
         """
         Parse LG (Login) message.
         Format: $,0,LG,<device_id>,<imei>,<firmware_version>,<iccid>,#?
+        After split: ['', '0', 'LG', '<device_id>', '<imei>', '<firmware_version>', '<iccid>']
         """
         try:
-            if len(parts) < 6:
+            if len(parts) < 7:
                 return None
 
-            dev_id = parts[2]
-            imei = parts[3]
-            firmware = parts[4]
-            iccid = parts[5]
+            dev_id = parts[3]
+            imei = parts[4]
+            firmware = parts[5]
+            iccid = parts[6]
 
             # Store IMEI mapping
             self.device_imei_map[dev_id] = imei
@@ -150,27 +152,28 @@ class TFMS90Adapter(ProtocolAdapter):
         Format: $,0,TD,<device_id>,<trip_number>,<timestamp>,<lat>,<lon>,<speed>,<heading>,
                 <satellites>,<hdop>,<fuel_level>,<odometer>,<digital_inputs>,<digital_outputs>,
                 <analog1>,<voltage>,<gsm_signal>,#?
+        After split: ['', '0', 'TD', '<device_id>', ...]
         """
         try:
-            if len(parts) < 18:
+            if len(parts) < 19:
                 return None
 
-            dev_id = parts[2]
-            trip_number = int(parts[3])
-            timestamp = self._hex_to_timestamp(parts[4])
-            latitude = float(parts[5])
-            longitude = float(parts[6])
-            speed = int(parts[7]) if parts[7] else 0
-            heading = int(parts[8]) if parts[8] else 0
-            satellites = int(parts[9]) if parts[9] else 0
-            hdop = float(parts[10]) if parts[10] else 0.0
-            fuel_level = float(parts[11]) if parts[11] else 0.0
-            odometer = int(parts[12]) if parts[12] else 0
-            digital_inputs = parts[13]
-            digital_outputs = parts[14]
-            analog1 = float(parts[15]) if parts[15] else 0.0
-            voltage = float(parts[16]) if parts[16] else 0.0
-            gsm_signal = int(parts[17]) if parts[17] else 0
+            dev_id = parts[3]
+            trip_number = int(parts[4])
+            timestamp = self._hex_to_timestamp(parts[5])
+            latitude = float(parts[6])
+            longitude = float(parts[7])
+            speed = int(parts[8]) if parts[8] else 0
+            heading = int(parts[9]) if parts[9] else 0
+            satellites = int(parts[10]) if parts[10] else 0
+            hdop = float(parts[11]) if parts[11] else 0.0
+            fuel_level = float(parts[12]) if parts[12] else 0.0
+            odometer = int(parts[13]) if parts[13] else 0
+            digital_inputs = parts[14]
+            digital_outputs = parts[15]
+            analog1 = float(parts[16]) if parts[16] else 0.0
+            voltage = float(parts[17]) if parts[17] else 0.0
+            gsm_signal = int(parts[18]) if parts[18] else 0
 
             # Get IMEI if available
             imei = self.device_imei_map.get(dev_id, dev_id)
