@@ -43,6 +43,14 @@ class ConnectionHandler:
             # Read initial data to detect protocol and authenticate
             data = await self.reader.read(settings.BUFFER_SIZE)
 
+            # Debug: Log received data
+            self.logger.info(f"Received {len(data)} bytes from {self.addr}")
+            self.logger.info(f"Raw data (hex): {data[:100].hex()}")
+            try:
+                self.logger.info(f"Data as text: {data[:200].decode('ascii', errors='ignore')}")
+            except:
+                pass
+
             if not data:
                 self.logger.warning(f"No data received from {self.addr}")
                 return
