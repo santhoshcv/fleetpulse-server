@@ -83,7 +83,17 @@ class ConnectionHandler:
             # Register/update device in database
             await self._register_device()
 
-            # Process the initial data
+            # Send initial acknowledgment based on protocol
+            if self.protocol == 'teltonika':
+                # Send IMEI ACK: 0x01 (accepted)
+                self.writer.write(b'\x01')
+                await self.writer.drain()
+                self.logger.info(f"Sent IMEI acknowledgment to {self.device_id}")
+
+                # Read actual data packet
+                data = await self.reader.read(BUFFER_SIZE)
+
+            # Process the initial data (for TFMS90, this is the first data; for Teltonika, this is after IMEI ACK)
             await self._process_data(data)
 
             # Main loop for subsequent messages
@@ -126,7 +136,7 @@ class ConnectionHandler:
                 # Update device last_seen
                 await db_client.update_device_last_seen(self.device_id)
 
-                # Send acknowledgment (TFMS90-specific)
+                # Send acknowledgment based on protocol
                 if self.protocol == 'tfms90' and telemetry_records:
                     # Extract message type and token from raw data for TFMS90 ACK
                     msg_type = telemetry_records[0].message_type
@@ -143,7 +153,15 @@ class ConnectionHandler:
                     if ack:
                         self.writer.write(ack)
                         await self.writer.drain()
-                        self.logger.debug(f"Sent ACK to {self.device_id}")
+                        self.logger.debug(f"Sent TFMS90 ACK to {self.device_id}")
+
+                elif self.protocol == 'teltonika' and telemetry_records:
+                    # Teltonika ACK: 4 bytes with number of records
+                    ack = self.adapter.create_response(len(telemetry_records))
+                    if ack:
+                        self.writer.write(ack)
+                        await self.writer.drain()
+                        self.logger.debug(f"Sent Teltonika ACK to {self.device_id}: {len(telemetry_records)} records")
 
         except Exception as e:
             self.logger.error(f"Error processing data from {self.device_id}: {e}")

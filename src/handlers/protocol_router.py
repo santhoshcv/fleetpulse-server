@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 from src.adapters.base import ProtocolAdapter
 from src.adapters.tfms90.tfms90 import TFMS90Adapter
+from src.adapters.teltonika.teltonika_codec8e import TeltonikaCodec8EAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ class ProtocolRouter:
     def __init__(self):
         """Initialize protocol router with available adapters."""
         self.adapters = {
+            'teltonika': TeltonikaCodec8EAdapter(),
             'tfms90': TFMS90Adapter(),
         }
         self.logger = logger
@@ -41,6 +43,20 @@ class ProtocolRouter:
 
         if len(data) < 2:
             return None
+
+        # Teltonika detection: starts with 2-byte IMEI length
+        # Common pattern: 0x00 0x0F (15 bytes IMEI) followed by ASCII digits
+        if len(data) >= 17:
+            imei_len = (data[0] << 8) | data[1]
+            if 10 <= imei_len <= 20:  # IMEI is typically 15 digits
+                try:
+                    # Check if next bytes are ASCII digits (IMEI)
+                    potential_imei = data[2:2 + imei_len].decode('ascii')
+                    if potential_imei.isdigit():
+                        self.logger.info("Detected Teltonika protocol")
+                        return 'teltonika'
+                except:
+                    pass
 
         # TFMS90 detection: text-based, format: $,<token>,<msg_type>,...
         try:
