@@ -10,40 +10,15 @@ class ProtocolAdapter(ABC):
 
     @abstractmethod
     async def parse(self, data: bytes, device_id: str) -> List[TelemetryData]:
-        """
-        Parse raw protocol data into telemetry records.
-
-        Args:
-            data: Raw bytes from the device
-            device_id: Device identifier (IMEI)
-
-        Returns:
-            List of parsed telemetry data records
-        """
-        pass
-
-    @abstractmethod
-    def create_response(self, record_count: int) -> bytes:
-        """
-        Create acknowledgment response for the device.
-
-        Args:
-            record_count: Number of records received
-
-        Returns:
-            Response bytes to send back to device
-        """
+        """Parse raw data into telemetry records."""
         pass
 
     @abstractmethod
     def identify_device(self, data: bytes) -> Optional[str]:
-        """
-        Extract device identifier from initial connection data.
+        """Extract device ID from data."""
+        pass
 
-        Args:
-            data: Initial connection bytes
-
-        Returns:
-            Device ID (IMEI) or None if not found
-        """
+    @abstractmethod
+    def create_response(self, num_records: int, **kwargs) -> bytes:
+        """Create acknowledgment response."""
         pass

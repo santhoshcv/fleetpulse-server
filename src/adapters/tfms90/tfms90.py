@@ -1,8 +1,8 @@
-"""TFMS90 Protocol v2.0 Parser - Text-based TCP protocol."""
+"""TFMS90 Protocol Adapter."""
 
 import logging
-from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional
+from datetime import datetime
 from src.adapters.base import ProtocolAdapter
 from src.models.telemetry import TelemetryData
 
@@ -10,495 +10,294 @@ logger = logging.getLogger(__name__)
 
 
 class TFMS90Adapter(ProtocolAdapter):
-    """
-    TFMS90 Protocol v2.0 Adapter.
-
-    Message format: $,<token>,<msg_type>,<device_id>,<trip_number>,<timestamp_hex>,<payload>,#?
-    Port: 23000
-    Timestamp: Hex format (seconds since 2000-01-01 00:00:00 UTC)
-    """
-
-    # Epoch for TFMS90 timestamps (2000-01-01 00:00:00 UTC)
-    EPOCH_2000 = datetime(2000, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-
-    MESSAGE_HANDLERS = {
-        'LG': '_parse_login',
-        'TD': '_parse_tracking_data',
-        'TDA': '_parse_tracking_data',  # Same as TD with additional data
-        'TS': '_parse_trip_start',
-        'TE': '_parse_trip_end',
-        'STAT': '_parse_trip_stats',
-        'HA2': '_parse_harsh_accel',
-        'HB2': '_parse_harsh_brake',
-        'HC2': '_parse_harsh_corner',
-        'OS3': '_parse_overspeed',
-        'FLF': '_parse_fuel_fill',
-        'FLD': '_parse_fuel_drain',
-        'FCR': '_parse_fuel_consumption',
-        'HB': '_parse_heartbeat',
-        'DHR': '_parse_device_health',
-        'ERR': '_parse_error',
-        'GEO': '_parse_geofence',
-        'DID': '_parse_driver_id',
-        'TMP': '_parse_tamper',
-    }
+    """Adapter for TFMS90 text-based protocol."""
 
     def __init__(self):
         """Initialize TFMS90 adapter."""
         self.logger = logger
-        self.device_imei_map = {}  # Maps device_id -> IMEI
-
-    async def parse(self, data: bytes, device_id: str) -> List[TelemetryData]:
-        """
-        Parse TFMS90 v2.0 message.
-
-        Format: $,<token>,<msg_type>,<device_id>,<trip_number>,<timestamp_hex>,<payload>,#?
-        """
-        try:
-            message = data.decode('ascii').strip()
-            self.logger.info(f"TFMS90 message: {message}")
-
-            # Remove delimiters
-            if message.startswith('$'):
-                message = message[1:]
-            if message.endswith('#?'):
-                message = message[:-2]
-            elif message.endswith('#'):
-                message = message[:-1]
-
-            parts = message.split(',')
-
-            if len(parts) < 3:
-                self.logger.warning(f"Invalid message format: {message}")
-                return []
-
-            # After removing $ and splitting: ,0,TD,171,... -> ['', '0', 'TD', '171', ...]
-            token = parts[1]
-            msg_type = parts[2]
-
-            # Route to handler
-            handler_name = self.MESSAGE_HANDLERS.get(msg_type)
-            if handler_name:
-                handler = getattr(self, handler_name, None)
-                if handler:
-                    telemetry = handler(parts, device_id)
-                    if telemetry:
-                        return [telemetry]
-            else:
-                self.logger.warning(f"Unknown message type: {msg_type}")
-
-            return []
-
-        except Exception as e:
-            self.logger.error(f"Error parsing TFMS90 message: {e}")
-            return []
-
-    def _hex_to_timestamp(self, hex_str: str) -> datetime:
-        """Convert hex timestamp to datetime (seconds since 2000-01-01)."""
-        try:
-            seconds = int(hex_str, 16)
-            return self.EPOCH_2000 + timezone.timedelta(seconds=seconds)
-        except:
-            return datetime.now(timezone.utc)
-
-    def _timestamp_to_hex(self, dt: datetime) -> str:
-        """Convert datetime to hex timestamp."""
-        seconds = int((dt - self.EPOCH_2000).total_seconds())
-        return format(seconds, '08X')
-
-    def _parse_login(self, parts: List[str], device_id: str) -> Optional[TelemetryData]:
-        """
-        Parse LG (Login) message.
-        Format: $,0,LG,<device_id>,<imei>,<firmware_version>,<iccid>,#?
-        After split: ['', '0', 'LG', '<device_id>', '<imei>', '<firmware_version>', '<iccid>']
-        """
-        try:
-            if len(parts) < 7:
-                return None
-
-            dev_id = parts[3]
-            imei = parts[4]
-            firmware = parts[5]
-            iccid = parts[6]
-
-            # Store IMEI mapping
-            self.device_imei_map[dev_id] = imei
-
-            self.logger.info(f"Device login: ID={dev_id}, IMEI={imei}, FW={firmware}")
-
-            # Create a telemetry record for login event
-            return TelemetryData(
-                device_id=imei,  # Use IMEI as primary device_id
-                timestamp=datetime.now(timezone.utc),
-                latitude=0.0,
-                longitude=0.0,
-                protocol="tfms90",
-                message_type="LG",
-                io_elements={
-                    "short_device_id": dev_id,
-                    "firmware_version": firmware,
-                    "iccid": iccid
-                },
-                raw_data=','.join(parts)
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error parsing LG: {e}")
-            return None
-
-    def _parse_tracking_data(self, parts: List[str], device_id: str) -> Optional[TelemetryData]:
-        """
-        Parse TD/TDA (Tracking Data) message.
-        Format: $,0,TD,<device_id>,<trip_number>,<timestamp>,<lat>,<lon>,<speed>,<heading>,
-                <satellites>,<hdop>,<fuel_level>,<odometer>,<digital_inputs>,<digital_outputs>,
-                <analog1>,<voltage>,<gsm_signal>,#?
-        After split: ['', '0', 'TD', '<device_id>', ...]
-        """
-        try:
-            if len(parts) < 19:
-                return None
-
-            dev_id = parts[3]
-            trip_number = int(parts[4])
-            timestamp = self._hex_to_timestamp(parts[5])
-            latitude = float(parts[6])
-            longitude = float(parts[7])
-            speed = int(parts[8]) if parts[8] else 0
-            heading = int(parts[9]) if parts[9] else 0
-            satellites = int(parts[10]) if parts[10] else 0
-            hdop = float(parts[11]) if parts[11] else 0.0
-            fuel_level = float(parts[12]) if parts[12] else 0.0
-            odometer = int(parts[13]) if parts[13] else 0
-            digital_inputs = parts[14]
-            digital_outputs = parts[15]
-            analog1 = float(parts[16]) if parts[16] else 0.0
-            voltage = float(parts[17]) if parts[17] else 0.0
-            gsm_signal = int(parts[18]) if parts[18] else 0
-
-            # Get IMEI if available
-            imei = self.device_imei_map.get(dev_id, dev_id)
-
-            return TelemetryData(
-                device_id=imei,
-                timestamp=timestamp,
-                latitude=latitude,
-                longitude=longitude,
-                speed=float(speed),
-                heading=heading,
-                satellites=satellites,
-                hdop=hdop,
-                fuel_level=fuel_level,
-                odometer=odometer / 1000.0,  # meters to km
-                battery_voltage=voltage,
-                ignition=True,  # TD means ignition is ON
-                moving=speed > 5,
-                protocol="tfms90",
-                message_type="TD",
-                io_elements={
-                    "short_device_id": dev_id,
-                    "trip_number": trip_number,
-                    "digital_inputs": digital_inputs,
-                    "digital_outputs": digital_outputs,
-                    "analog1": analog1,
-                    "gsm_signal": gsm_signal
-                },
-                raw_data=','.join(parts)
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error parsing TD: {e}")
-            return None
-
-    def _parse_trip_start(self, parts: List[str], device_id: str) -> Optional[TelemetryData]:
-        """
-        Parse TS (Trip Start) message.
-        Format: $,0,TS,<device_id>,<trip_number>,<timestamp>,<fuel_level>,<lat>,<lon>,<voltage>,#?
-        """
-        try:
-            if len(parts) < 10:
-                return None
-
-            dev_id = parts[2]
-            trip_number = int(parts[3])
-            timestamp = self._hex_to_timestamp(parts[4])
-            fuel_level = float(parts[5])
-            latitude = float(parts[6])
-            longitude = float(parts[7])
-            voltage = float(parts[8])
-
-            imei = self.device_imei_map.get(dev_id, dev_id)
-
-            return TelemetryData(
-                device_id=imei,
-                timestamp=timestamp,
-                latitude=latitude,
-                longitude=longitude,
-                fuel_level=fuel_level,
-                battery_voltage=voltage,
-                ignition=True,
-                moving=True,
-                protocol="tfms90",
-                message_type="TS",
-                io_elements={
-                    "short_device_id": dev_id,
-                    "trip_number": trip_number,
-                    "event": "trip_start"
-                },
-                raw_data=','.join(parts)
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error parsing TS: {e}")
-            return None
-
-    def _parse_trip_end(self, parts: List[str], device_id: str) -> Optional[TelemetryData]:
-        """
-        Parse TE (Trip End) message.
-        Format: $,0,TE,<device_id>,<trip_number>,<start_timestamp>,<end_timestamp>,<duration_sec>,
-                <distance_m>,<start_fuel>,<end_fuel>,<fuel_consumed>,<max_speed>,<avg_speed>,
-                <start_lat>,<start_lon>,<end_lat>,<end_lon>,<voltage>,#?
-        """
-        try:
-            if len(parts) < 18:
-                return None
-
-            dev_id = parts[2]
-            trip_number = int(parts[3])
-            start_time = self._hex_to_timestamp(parts[4])
-            end_time = self._hex_to_timestamp(parts[5])
-            duration = int(parts[6])
-            distance = int(parts[7])
-            start_fuel = float(parts[8])
-            end_fuel = float(parts[9])
-            fuel_consumed = float(parts[10])
-            max_speed = int(parts[11])
-            avg_speed = int(parts[12])
-            start_lat = float(parts[13])
-            start_lon = float(parts[14])
-            end_lat = float(parts[15])
-            end_lon = float(parts[16])
-            voltage = float(parts[17])
-
-            imei = self.device_imei_map.get(dev_id, dev_id)
-
-            return TelemetryData(
-                device_id=imei,
-                timestamp=end_time,
-                latitude=end_lat,
-                longitude=end_lon,
-                fuel_level=end_fuel,
-                battery_voltage=voltage,
-                ignition=False,
-                moving=False,
-                protocol="tfms90",
-                message_type="TE",
-                io_elements={
-                    "short_device_id": dev_id,
-                    "trip_number": trip_number,
-                    "event": "trip_end",
-                    "start_time": start_time.isoformat(),
-                    "duration_sec": duration,
-                    "distance_m": distance,
-                    "start_fuel": start_fuel,
-                    "fuel_consumed": fuel_consumed,
-                    "max_speed": max_speed,
-                    "avg_speed": avg_speed,
-                    "start_lat": start_lat,
-                    "start_lon": start_lon
-                },
-                raw_data=','.join(parts)
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error parsing TE: {e}")
-            return None
-
-    def _parse_heartbeat(self, parts: List[str], device_id: str) -> Optional[TelemetryData]:
-        """
-        Parse HB (Heartbeat) message.
-        Format: $,0,HB,<device_id>,<timestamp>,<fuel_level>,<voltage>,<gsm_signal>,
-                <gps_fix>,<lat>,<lon>,<odometer>,<acc_status>,<sleep_mode>,#?
-        """
-        try:
-            if len(parts) < 13:
-                return None
-
-            dev_id = parts[2]
-            timestamp = self._hex_to_timestamp(parts[3])
-            fuel_level = float(parts[4])
-            voltage = float(parts[5])
-            gsm_signal = int(parts[6])
-            gps_fix = int(parts[7])
-            latitude = float(parts[8])
-            longitude = float(parts[9])
-            odometer = int(parts[10])
-            acc_status = int(parts[11])
-            sleep_mode = int(parts[12])
-
-            imei = self.device_imei_map.get(dev_id, dev_id)
-
-            return TelemetryData(
-                device_id=imei,
-                timestamp=timestamp,
-                latitude=latitude,
-                longitude=longitude,
-                fuel_level=fuel_level,
-                battery_voltage=voltage,
-                odometer=odometer / 1000.0,
-                ignition=bool(acc_status),
-                moving=False,
-                protocol="tfms90",
-                message_type="HB",
-                io_elements={
-                    "short_device_id": dev_id,
-                    "gsm_signal": gsm_signal,
-                    "gps_fix": gps_fix,
-                    "sleep_mode": sleep_mode
-                },
-                raw_data=','.join(parts)
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error parsing HB: {e}")
-            return None
-
-    def _parse_fuel_fill(self, parts: List[str], device_id: str) -> Optional[TelemetryData]:
-        """
-        Parse FLF (Fuel Fill) message.
-        Format: $,0,FLF,<device_id>,<trip_number>,<timestamp>,<volume>,
-                <fuel_before>,<fuel_after>,<lat>,<lon>,#?
-        """
-        try:
-            if len(parts) < 11:
-                return None
-
-            dev_id = parts[2]
-            trip_number = int(parts[3])
-            timestamp = self._hex_to_timestamp(parts[4])
-            volume = float(parts[5])
-            fuel_before = float(parts[6])
-            fuel_after = float(parts[7])
-            latitude = float(parts[8])
-            longitude = float(parts[9])
-
-            imei = self.device_imei_map.get(dev_id, dev_id)
-
-            return TelemetryData(
-                device_id=imei,
-                timestamp=timestamp,
-                latitude=latitude,
-                longitude=longitude,
-                fuel_level=fuel_after,
-                protocol="tfms90",
-                message_type="FLF",
-                io_elements={
-                    "short_device_id": dev_id,
-                    "trip_number": trip_number,
-                    "event": "fuel_fill",
-                    "volume": volume,
-                    "fuel_before": fuel_before,
-                    "fuel_after": fuel_after
-                },
-                raw_data=','.join(parts)
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error parsing FLF: {e}")
-            return None
-
-    def _parse_fuel_drain(self, parts: List[str], device_id: str) -> Optional[TelemetryData]:
-        """Parse FLD (Fuel Drain) - same format as FLF."""
-        telemetry = self._parse_fuel_fill(parts, device_id)
-        if telemetry:
-            telemetry.message_type = "FLD"
-            if telemetry.io_elements:
-                telemetry.io_elements["event"] = "fuel_drain"
-        return telemetry
-
-    # Stub handlers for other message types
-    def _parse_trip_stats(self, parts, device_id): return None
-    def _parse_harsh_accel(self, parts, device_id): return None
-    def _parse_harsh_brake(self, parts, device_id): return None
-    def _parse_harsh_corner(self, parts, device_id): return None
-    def _parse_overspeed(self, parts, device_id): return None
-    def _parse_fuel_consumption(self, parts, device_id): return None
-    def _parse_device_health(self, parts, device_id): return None
-    def _parse_error(self, parts, device_id): return None
-    def _parse_geofence(self, parts, device_id): return None
-    def _parse_driver_id(self, parts, device_id): return None
-    def _parse_tamper(self, parts, device_id): return None
-
-    def create_response(self, record_count: int, msg_type: str = "TD",
-                       device_id: str = "", token: str = "0") -> bytes:
-        """
-        Create server ACK response for TFMS90 device.
-        Format: $AK,<msg_type>,<device_id>,<token_or_trip>,#
-        """
-        # Messages that need ACK: LG, TS, TE, FLF, FLD, HA2, HB2, HC2, OS3, GEO, TMP, ERR
-        ack_messages = ['LG', 'TS', 'TE', 'FLF', 'FLD', 'HA2', 'HB2', 'HC2', 'OS3', 'GEO', 'TMP', 'ERR']
-
-        if msg_type in ack_messages:
-            if msg_type == 'LG':
-                # LG response includes server timestamp
-                server_time = self._timestamp_to_hex(datetime.now(timezone.utc))
-                response = f"$AK,LG,{device_id},{server_time},#"
-            else:
-                response = f"$AK,{msg_type},{device_id},{token},#"
-
-            self.logger.info(f"Sending ACK: {response}")
-            return response.encode('ascii')
-
-        return b""  # No ACK for other messages
 
     def identify_device(self, data: bytes) -> Optional[str]:
         """
         Extract device ID from TFMS90 message.
-        Can identify from LG, TD, TS, or any other message type.
-        Format: $,<token>,<msg_type>,<device_id>,...
+
+        Format: $,<token>,<msg_type>,<device_id>,<trip_number>,<timestamp>,<payload>,#?
+        After splitting by '$,': ['', '<token>', '<msg_type>', '<device_id>', ...]
         """
         try:
-            message = data.decode('ascii').strip()
-
-            # Remove delimiters
-            if message.startswith('$'):
-                message = message[1:]
-            if message.endswith('#?'):
-                message = message[:-2]
-            elif message.endswith('#'):
-                message = message[:-1]
-
-            parts = message.split(',')
-
-            if len(parts) < 3:
+            text = data.decode('ascii').strip()
+            if not text.startswith('$'):
                 return None
 
-            msg_type = parts[1]
+            parts = text.split(',')
+            if len(parts) < 4:
+                return None
 
-            # For LG message, use IMEI from parts[3]
-            if msg_type == 'LG' and len(parts) >= 4:
-                dev_id = parts[2]
-                imei = parts[3]
-                self.device_imei_map[dev_id] = imei
-                self.logger.info(f"Identified TFMS90 device via LG: short_id={dev_id}, IMEI={imei}")
-                return imei
+            # parts[0] = '' (before $)
+            # parts[1] = token
+            # parts[2] = message type
+            # parts[3] = device_id
+            device_id = parts[3]
 
-            # For all other messages, use device_id from parts[2]
-            # We'll use the short device_id as identifier for now
-            # (In a real system, you'd maintain session state to map short_id to IMEI)
-            elif len(parts) >= 3:
-                dev_id = parts[2]
-                # Generate a pseudo-IMEI from device_id if we don't have the real one
-                if dev_id not in self.device_imei_map:
-                    pseudo_imei = f"TFMS90_{dev_id}"
-                    self.device_imei_map[dev_id] = pseudo_imei
-                    self.logger.info(f"Identified TFMS90 device via {msg_type}: device_id={dev_id}, pseudo_IMEI={pseudo_imei}")
-                    return pseudo_imei
-                else:
-                    imei = self.device_imei_map[dev_id]
-                    self.logger.info(f"Identified TFMS90 device via {msg_type}: device_id={dev_id}, IMEI={imei}")
-                    return imei
+            if device_id:
+                self.logger.info(f"Identified TFMS90 device: {device_id}")
+                return f"TFMS90_{device_id}"
+
+            return None
 
         except Exception as e:
             self.logger.error(f"Error identifying TFMS90 device: {e}")
+            return None
 
-        return None
+    async def parse(self, data: bytes, device_id: str) -> List[TelemetryData]:
+        """
+        Parse TFMS90 data into telemetry records.
+
+        Format: $,<token>,<msg_type>,<device_id>,<trip_number>,<timestamp_hex>,<lat>,<lon>,<speed>,<heading>,<satellites>,<fuel>,<odometer>,#?
+        """
+        try:
+            text = data.decode('ascii').strip()
+            self.logger.info(f"Parsing TFMS90 message: {text[:100]}")
+
+            if not text.startswith('$'):
+                self.logger.warning("Message doesn't start with $")
+                return []
+
+            # Remove $ and split
+            parts = text.split(',')
+
+            if len(parts) < 4:
+                self.logger.warning(f"Insufficient parts: {len(parts)}")
+                return []
+
+            # parts[0] = '' (empty string before $)
+            # parts[1] = token
+            # parts[2] = message type
+            # parts[3] = device_id
+            token = parts[1]
+            msg_type = parts[2].upper()
+            dev_id = parts[3]
+
+            self.logger.info(f"Message type: {msg_type}, Device: {dev_id}, Token: {token}")
+
+            # Parse based on message type
+            if msg_type == 'TD' or msg_type == 'TDA':
+                return await self._parse_tracking_data(parts, device_id)
+            elif msg_type in ['TS', 'TE']:
+                return await self._parse_trip_event(parts, device_id, msg_type)
+            elif msg_type in ['HA2', 'HB2', 'HC2']:
+                return await self._parse_harsh_event(parts, device_id, msg_type)
+            elif msg_type in ['FLF', 'FLD']:
+                return await self._parse_fuel_event(parts, device_id, msg_type)
+            elif msg_type in ['HB', 'OS3', 'STAT']:
+                return await self._parse_status(parts, device_id, msg_type)
+            else:
+                self.logger.warning(f"Unknown message type: {msg_type}")
+                return []
+
+        except Exception as e:
+            self.logger.error(f"Error parsing TFMS90 data: {e}")
+            return []
+
+    async def _parse_tracking_data(self, parts: List[str], device_id: str) -> List[TelemetryData]:
+        """
+        Parse TD (Tracking Data) message.
+
+        Format after split: ['', token, 'TD', dev_id, trip_num, timestamp_hex, lat, lon, speed, heading, sats, fuel, odo, ...]
+        Indices:             0    1      2      3        4           5            6    7     8       9       10    11    12
+        """
+        try:
+            if len(parts) < 13:
+                self.logger.warning(f"TD message too short: {len(parts)} parts")
+                return []
+
+            # Parse timestamp (hex seconds since 2000-01-01)
+            timestamp_hex = parts[5]
+            timestamp = self._parse_timestamp(timestamp_hex)
+
+            # Parse GPS data
+            latitude = float(parts[6])
+            longitude = float(parts[7])
+            speed = float(parts[8]) if parts[8] else 0.0
+            heading = float(parts[9]) if parts[9] else 0.0
+            satellites = int(parts[10]) if parts[10] else 0
+
+            # Parse IO elements
+            fuel = float(parts[11]) if len(parts) > 11 and parts[11] else None
+            odometer = float(parts[12]) if len(parts) > 12 and parts[12] else None
+
+            io_elements = {
+                "trip_number": parts[4],
+                "short_device_id": parts[3],
+                "fuel_level": fuel,
+                "odometer": odometer,
+            }
+
+            telemetry = TelemetryData(
+                device_id=device_id,
+                timestamp=timestamp,
+                latitude=latitude,
+                longitude=longitude,
+                speed=speed,
+                heading=heading,
+                satellites=satellites,
+                protocol="tfms90",
+                message_type="TD",
+                io_elements=io_elements,
+            )
+
+            self.logger.info(f"Parsed TD: lat={latitude}, lon={longitude}, speed={speed}")
+            return [telemetry]
+
+        except Exception as e:
+            self.logger.error(f"Error parsing TD message: {e}")
+            return []
+
+    async def _parse_trip_event(self, parts: List[str], device_id: str, msg_type: str) -> List[TelemetryData]:
+        """Parse TS (Trip Start) or TE (Trip End) message."""
+        try:
+            if len(parts) < 11:
+                return []
+
+            timestamp = self._parse_timestamp(parts[5])
+            latitude = float(parts[6])
+            longitude = float(parts[7])
+
+            io_elements = {
+                "trip_number": parts[4],
+                "short_device_id": parts[3],
+                "event_type": "trip_start" if msg_type == "TS" else "trip_end",
+            }
+
+            return [TelemetryData(
+                device_id=device_id,
+                timestamp=timestamp,
+                latitude=latitude,
+                longitude=longitude,
+                protocol="tfms90",
+                message_type=msg_type,
+                io_elements=io_elements,
+            )]
+
+        except Exception as e:
+            self.logger.error(f"Error parsing {msg_type} message: {e}")
+            return []
+
+    async def _parse_harsh_event(self, parts: List[str], device_id: str, msg_type: str) -> List[TelemetryData]:
+        """Parse harsh acceleration/braking/cornering events."""
+        try:
+            if len(parts) < 11:
+                return []
+
+            timestamp = self._parse_timestamp(parts[5])
+            latitude = float(parts[6])
+            longitude = float(parts[7])
+
+            event_map = {"HA2": "harsh_acceleration", "HB2": "harsh_braking", "HC2": "harsh_cornering"}
+
+            io_elements = {
+                "trip_number": parts[4],
+                "short_device_id": parts[3],
+                "event_type": event_map.get(msg_type, "harsh_event"),
+            }
+
+            return [TelemetryData(
+                device_id=device_id,
+                timestamp=timestamp,
+                latitude=latitude,
+                longitude=longitude,
+                protocol="tfms90",
+                message_type=msg_type,
+                io_elements=io_elements,
+            )]
+
+        except Exception as e:
+            self.logger.error(f"Error parsing {msg_type} message: {e}")
+            return []
+
+    async def _parse_fuel_event(self, parts: List[str], device_id: str, msg_type: str) -> List[TelemetryData]:
+        """Parse FLF (Fuel Fill) or FLD (Fuel Drain) message."""
+        try:
+            if len(parts) < 12:
+                return []
+
+            timestamp = self._parse_timestamp(parts[5])
+            latitude = float(parts[6])
+            longitude = float(parts[7])
+            fuel_level = float(parts[11]) if parts[11] else None
+
+            io_elements = {
+                "trip_number": parts[4],
+                "short_device_id": parts[3],
+                "event_type": "fuel_fill" if msg_type == "FLF" else "fuel_drain",
+                "fuel_level": fuel_level,
+            }
+
+            return [TelemetryData(
+                device_id=device_id,
+                timestamp=timestamp,
+                latitude=latitude,
+                longitude=longitude,
+                protocol="tfms90",
+                message_type=msg_type,
+                io_elements=io_elements,
+            )]
+
+        except Exception as e:
+            self.logger.error(f"Error parsing {msg_type} message: {e}")
+            return []
+
+    async def _parse_status(self, parts: List[str], device_id: str, msg_type: str) -> List[TelemetryData]:
+        """Parse HB (Heartbeat), OS3 (Overspeed), or STAT (Status) message."""
+        try:
+            if len(parts) < 8:
+                return []
+
+            timestamp = self._parse_timestamp(parts[5]) if len(parts) > 5 else datetime.utcnow()
+
+            io_elements = {
+                "short_device_id": parts[3],
+                "status_type": msg_type.lower(),
+            }
+
+            return [TelemetryData(
+                device_id=device_id,
+                timestamp=timestamp,
+                latitude=0.0,
+                longitude=0.0,
+                protocol="tfms90",
+                message_type=msg_type,
+                io_elements=io_elements,
+            )]
+
+        except Exception as e:
+            self.logger.error(f"Error parsing {msg_type} message: {e}")
+            return []
+
+    def _parse_timestamp(self, timestamp_hex: str) -> datetime:
+        """Convert hex timestamp to datetime (seconds since 2000-01-01)."""
+        try:
+            seconds_since_2000 = int(timestamp_hex, 16)
+            epoch_2000 = datetime(2000, 1, 1)
+            from datetime import timedelta
+            return epoch_2000 + timedelta(seconds=seconds_since_2000)
+        except:
+            return datetime.utcnow()
+
+    def create_response(self, num_records: int, **kwargs) -> bytes:
+        """
+        Create TFMS90 acknowledgment.
+
+        Format: $,<token>,ACK,<device_id>,<num_records>,#?
+        """
+        try:
+            msg_type = kwargs.get('msg_type', 'TD')
+            device_id = kwargs.get('device_id', '000')
+            token = kwargs.get('token', '0')
+
+            ack = f"$,{token},ACK,{device_id},{num_records},#?\n"
+            self.logger.debug(f"Created TFMS90 ACK: {ack.strip()}")
+            return ack.encode('ascii')
+
+        except Exception as e:
+            self.logger.error(f"Error creating TFMS90 response: {e}")
+            return b"$,0,ACK,000,0,#?\n"

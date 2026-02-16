@@ -9,9 +9,11 @@ from src.handlers.protocol_router import ProtocolRouter
 from src.adapters.base import ProtocolAdapter
 from src.utils.database import db_client
 from src.models.device import Device
-from config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+# Hardcoded settings
+BUFFER_SIZE = 4096
 
 
 class ConnectionHandler:
@@ -41,13 +43,8 @@ class ConnectionHandler:
             self.logger.info(f"New connection from {self.addr}")
 
             # Read initial data to detect protocol and authenticate
-            print(f"DEBUG: About to read data from {self.addr}")
-            data = await self.reader.read(settings.BUFFER_SIZE)
-            print(f"DEBUG: Received {len(data)} bytes")
-            print(f"DEBUG: Data (first 100 bytes): {data[:100]}")
-            print(f"DEBUG: Data as hex: {data[:100].hex()}")
+            data = await self.reader.read(BUFFER_SIZE)
 
-            # Debug: Log received data
             self.logger.info(f"Received {len(data)} bytes from {self.addr}")
             self.logger.info(f"Raw data (hex): {data[:100].hex()}")
             try:
@@ -86,22 +83,12 @@ class ConnectionHandler:
             # Register/update device in database
             await self._register_device()
 
-            # Send initial acknowledgment for Teltonika
-            if self.protocol == 'teltonika':
-                # Send ACK: 0x01 (accepted)
-                self.writer.write(b'\x01')
-                await self.writer.drain()
-                self.logger.info(f"Sent IMEI acknowledgment to {self.device_id}")
-
-                # Read actual data packet
-                data = await self.reader.read(settings.BUFFER_SIZE)
-
-            # Process the data
+            # Process the initial data
             await self._process_data(data)
 
             # Main loop for subsequent messages
             while True:
-                data = await self.reader.read(settings.BUFFER_SIZE)
+                data = await self.reader.read(BUFFER_SIZE)
 
                 if not data:
                     self.logger.info(f"Connection closed by device {self.device_id}")
@@ -153,14 +140,10 @@ class ConnectionHandler:
                         device_id=short_id,
                         token=str(token)
                     )
-                else:
-                    # Teltonika or other protocols
-                    ack = self.adapter.create_response(len(telemetry_records))
-
-                if ack:
-                    self.writer.write(ack)
-                    await self.writer.drain()
-                    self.logger.debug(f"Sent ACK to {self.device_id}")
+                    if ack:
+                        self.writer.write(ack)
+                        await self.writer.drain()
+                        self.logger.debug(f"Sent ACK to {self.device_id}")
 
         except Exception as e:
             self.logger.error(f"Error processing data from {self.device_id}: {e}")
