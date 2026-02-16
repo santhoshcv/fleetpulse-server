@@ -41,7 +41,11 @@ class ConnectionHandler:
             self.logger.info(f"New connection from {self.addr}")
 
             # Read initial data to detect protocol and authenticate
+            print(f"DEBUG: About to read data from {self.addr}")
             data = await self.reader.read(settings.BUFFER_SIZE)
+            print(f"DEBUG: Received {len(data)} bytes")
+            print(f"DEBUG: Data (first 100 bytes): {data[:100]}")
+            print(f"DEBUG: Data as hex: {data[:100].hex()}")
 
             # Debug: Log received data
             self.logger.info(f"Received {len(data)} bytes from {self.addr}")
