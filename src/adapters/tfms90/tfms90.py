@@ -449,20 +449,50 @@ class TFMS90Adapter(ProtocolAdapter):
 
     def identify_device(self, data: bytes) -> Optional[str]:
         """
-        Extract device ID from TFMS90 LG (Login) message.
-        Format: $,0,LG,<device_id>,<imei>,<firmware_version>,<iccid>,#?
+        Extract device ID from TFMS90 message.
+        Can identify from LG, TD, TS, or any other message type.
+        Format: $,<token>,<msg_type>,<device_id>,...
         """
         try:
             message = data.decode('ascii').strip()
 
-            if ',LG,' in message:
-                parts = message.split(',')
-                if len(parts) >= 4:
-                    # Return IMEI as the primary device identifier
-                    imei = parts[4]
-                    dev_id = parts[3]
-                    self.device_imei_map[dev_id] = imei
-                    self.logger.info(f"Identified TFMS90 device: short_id={dev_id}, IMEI={imei}")
+            # Remove delimiters
+            if message.startswith('$'):
+                message = message[1:]
+            if message.endswith('#?'):
+                message = message[:-2]
+            elif message.endswith('#'):
+                message = message[:-1]
+
+            parts = message.split(',')
+
+            if len(parts) < 3:
+                return None
+
+            msg_type = parts[1]
+
+            # For LG message, use IMEI from parts[3]
+            if msg_type == 'LG' and len(parts) >= 4:
+                dev_id = parts[2]
+                imei = parts[3]
+                self.device_imei_map[dev_id] = imei
+                self.logger.info(f"Identified TFMS90 device via LG: short_id={dev_id}, IMEI={imei}")
+                return imei
+
+            # For all other messages, use device_id from parts[2]
+            # We'll use the short device_id as identifier for now
+            # (In a real system, you'd maintain session state to map short_id to IMEI)
+            elif len(parts) >= 3:
+                dev_id = parts[2]
+                # Generate a pseudo-IMEI from device_id if we don't have the real one
+                if dev_id not in self.device_imei_map:
+                    pseudo_imei = f"TFMS90_{dev_id}"
+                    self.device_imei_map[dev_id] = pseudo_imei
+                    self.logger.info(f"Identified TFMS90 device via {msg_type}: device_id={dev_id}, pseudo_IMEI={pseudo_imei}")
+                    return pseudo_imei
+                else:
+                    imei = self.device_imei_map[dev_id]
+                    self.logger.info(f"Identified TFMS90 device via {msg_type}: device_id={dev_id}, IMEI={imei}")
                     return imei
 
         except Exception as e:
