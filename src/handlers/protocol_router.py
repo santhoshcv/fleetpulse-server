@@ -59,17 +59,18 @@ class ProtocolRouter:
                 except:
                     pass
 
-        # TFMS90 detection: text-based, starts with device ID and comma
+        # TFMS90 detection: text-based, format: $,<token>,<msg_type>,...
         try:
             text = data.decode('ascii').strip()
             if ',' in text:
                 parts = text.split(',')
                 # Check if it looks like TFMS90 format
-                if len(parts) >= 2:
-                    msg_type = parts[1].upper()
-                    known_types = ['TD', 'TS', 'TE', 'HA2', 'HB2', 'HC2', 'OS3', 'FLF', 'FLD']
+                # Format: $,0,LG,... or $,0,TD,... or $,0,TS,...
+                if len(parts) >= 3 and parts[0].startswith('$'):
+                    msg_type = parts[2].upper()  # Message type is at index 2, not 1!
+                    known_types = ['LG', 'TD', 'TDA', 'TS', 'TE', 'HA2', 'HB2', 'HC2', 'OS3', 'FLF', 'FLD', 'STAT', 'FCR', 'HB', 'DHR', 'ERR', 'GEO', 'DID', 'TMP']
                     if msg_type in known_types:
-                        self.logger.info("Detected TFMS90 protocol")
+                        self.logger.info(f"Detected TFMS90 protocol (message type: {msg_type})")
                         return 'tfms90'
         except:
             pass
