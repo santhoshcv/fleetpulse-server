@@ -1,71 +1,33 @@
-"""Database client for PostgreSQL operations."""
+"""Database client for Supabase operations."""
 
 import logging
-import psycopg2
-from psycopg2.extras import RealDictCursor, Json
+from supabase import create_client, Client
 from typing import Optional, List, Dict
-import os
 
 logger = logging.getLogger(__name__)
 
-# Database connection parameters
-DB_HOST = "db.ypxlpqylmxddrvhasmst.supabase.co"
-DB_PORT = "5432"
-DB_NAME = "postgres"
-DB_USER = "postgres"
-DB_PASSWORD = "tHinkpad#123A"
+# Hardcoded Supabase credentials
+SUPABASE_URL = "https://ypxlpqylmxddrvhasmst.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlweGxwcXlsbXhkZHJ2aGFzbXN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyMzM3MjAsImV4cCI6MjA4NjgwOTcyMH0.6UYQzZSMFne8CdugAwqJhjBTIe-8YP8fL1jQeM4YJTw"
 
 
 class DatabaseClient:
-    """PostgreSQL database client using psycopg2."""
+    """Supabase database client."""
 
     def __init__(self):
-        """Initialize PostgreSQL connection pool."""
+        """Initialize Supabase client."""
         try:
-            self.conn = psycopg2.connect(
-                host=DB_HOST,
-                port=DB_PORT,
-                dbname=DB_NAME,
-                user=DB_USER,
-                password=DB_PASSWORD,
-                cursor_factory=RealDictCursor
-            )
-            self.conn.autocommit = False
-            logger.info("✓ Database client initialized with psycopg2")
+            self.client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+            logger.info("✓ Database client initialized")
         except Exception as e:
             logger.error(f"Failed to initialize database client: {e}")
             raise
 
-    def _get_cursor(self):
-        """Get a cursor, reconnecting if needed."""
-        try:
-            # Test connection
-            self.conn.isolation_level
-        except:
-            # Reconnect if connection is dead
-            logger.warning("Reconnecting to database...")
-            self.conn = psycopg2.connect(
-                host=DB_HOST,
-                port=DB_PORT,
-                dbname=DB_NAME,
-                user=DB_USER,
-                password=DB_PASSWORD,
-                cursor_factory=RealDictCursor
-            )
-            self.conn.autocommit = False
-        return self.conn.cursor()
-
     async def get_device(self, device_id: str) -> Optional[Dict]:
         """Get device by ID."""
         try:
-            cursor = self._get_cursor()
-            cursor.execute(
-                "SELECT * FROM devices WHERE device_id = %s LIMIT 1",
-                (device_id,)
-            )
-            result = cursor.fetchone()
-            cursor.close()
-            return dict(result) if result else None
+            response = self.client.table("devices").select("*").eq("device_id", device_id).execute()
+            return response.data[0] if response.data else None
         except Exception as e:
             logger.error(f"Error fetching device {device_id}: {e}")
             return None
@@ -73,30 +35,9 @@ class DatabaseClient:
     async def upsert_device(self, device_data: Dict):
         """Insert or update device."""
         try:
-            cursor = self._get_cursor()
-
-            # Build column names and placeholders
-            columns = list(device_data.keys())
-            values = [device_data[col] for col in columns]
-
-            # Create INSERT with ON CONFLICT DO UPDATE
-            cols_str = ", ".join(columns)
-            placeholders = ", ".join(["%s"] * len(columns))
-            update_set = ", ".join([f"{col} = EXCLUDED.{col}" for col in columns if col != 'device_id'])
-
-            query = f"""
-                INSERT INTO devices ({cols_str})
-                VALUES ({placeholders})
-                ON CONFLICT (device_id)
-                DO UPDATE SET {update_set}
-            """
-
-            cursor.execute(query, values)
-            self.conn.commit()
-            cursor.close()
+            self.client.table("devices").upsert(device_data).execute()
             logger.info(f"Device {device_data['device_id']} upserted")
         except Exception as e:
-            self.conn.rollback()
             logger.error(f"Error upserting device: {e}")
             raise
 
@@ -104,56 +45,33 @@ class DatabaseClient:
         """Update device last_seen timestamp."""
         from datetime import datetime
         try:
-            cursor = self._get_cursor()
-            cursor.execute(
-                "UPDATE devices SET last_seen = %s WHERE device_id = %s",
-                (datetime.utcnow(), device_id)
-            )
-            self.conn.commit()
-            cursor.close()
+            self.client.table("devices").update({
+                "last_seen": datetime.utcnow().isoformat()
+            }).eq("device_id", device_id).execute()
         except Exception as e:
-            self.conn.rollback()
             logger.error(f"Error updating last_seen for {device_id}: {e}")
 
     async def insert_telemetry(self, telemetry_data: Dict):
-        """Insert single telemetry record with proper JSONB handling."""
+        """Insert single telemetry record."""
         try:
-            cursor = self._get_cursor()
-
-            # Prepare data - convert io_elements dict to JSON for psycopg2
+            # Clean io_elements: remove fields that don't exist as database columns
+            # Keep only fields that should stay in JSONB
             data = telemetry_data.copy()
-            io_elements = data.get('io_elements')
-            if io_elements and isinstance(io_elements, dict):
-                data['io_elements'] = Json(io_elements)
+            if data.get('io_elements') and isinstance(data['io_elements'], dict):
+                io_elements = data['io_elements'].copy()
 
-            # Build INSERT query dynamically based on available columns
-            columns = [
-                'device_id', 'timestamp', 'latitude', 'longitude',
-                'altitude', 'speed', 'heading', 'satellites',
-                'fuel_level', 'protocol', 'message_type', 'io_elements'
-            ]
+                # Remove fields that Supabase will try to unnest but don't exist as columns
+                # These are stored in io_elements but aren't top-level columns in telemetry_data table
+                fields_to_remove = ['trip_number', 'short_device_id']
+                for field in fields_to_remove:
+                    io_elements.pop(field, None)
 
-            # Only include columns that have non-None values
-            insert_cols = []
-            insert_vals = []
-            for col in columns:
-                if col in data:
-                    insert_cols.append(col)
-                    insert_vals.append(data[col])
-
-            cols_str = ", ".join(insert_cols)
-            placeholders = ", ".join(["%s"] * len(insert_cols))
-
-            query = f"INSERT INTO telemetry_data ({cols_str}) VALUES ({placeholders})"
+                data['io_elements'] = io_elements
 
             logger.info(f"Inserting telemetry: device={data.get('device_id')}, fuel={data.get('fuel_level')}, msg_type={data.get('message_type')}")
-            cursor.execute(query, insert_vals)
-            self.conn.commit()
-            cursor.close()
+            self.client.table("telemetry_data").insert(data).execute()
             logger.info("✓ Telemetry inserted successfully")
-
         except Exception as e:
-            self.conn.rollback()
             logger.error(f"Error inserting telemetry: {e}")
             logger.error(f"Data was: {telemetry_data}")
             raise
@@ -161,55 +79,32 @@ class DatabaseClient:
     async def insert_telemetry_batch(self, telemetry_list: List[Dict]):
         """Batch insert telemetry records."""
         try:
-            cursor = self._get_cursor()
-
+            # Clean io_elements for each record
+            data_list = []
             for telemetry_data in telemetry_list:
-                # Prepare data
                 data = telemetry_data.copy()
-                io_elements = data.get('io_elements')
-                if io_elements and isinstance(io_elements, dict):
-                    data['io_elements'] = Json(io_elements)
+                if data.get('io_elements') and isinstance(data['io_elements'], dict):
+                    io_elements = data['io_elements'].copy()
 
-                # Build INSERT
-                columns = [
-                    'device_id', 'timestamp', 'latitude', 'longitude',
-                    'altitude', 'speed', 'heading', 'satellites',
-                    'fuel_level', 'protocol', 'message_type', 'io_elements'
-                ]
+                    # Remove problematic fields
+                    fields_to_remove = ['trip_number', 'short_device_id']
+                    for field in fields_to_remove:
+                        io_elements.pop(field, None)
 
-                insert_cols = []
-                insert_vals = []
-                for col in columns:
-                    if col in data:
-                        insert_cols.append(col)
-                        insert_vals.append(data[col])
+                    data['io_elements'] = io_elements
+                data_list.append(data)
 
-                cols_str = ", ".join(insert_cols)
-                placeholders = ", ".join(["%s"] * len(insert_cols))
-                query = f"INSERT INTO telemetry_data ({cols_str}) VALUES ({placeholders})"
-
-                cursor.execute(query, insert_vals)
-
-            self.conn.commit()
-            cursor.close()
-            logger.info(f"✓ Inserted {len(telemetry_list)} telemetry records")
-
+            self.client.table("telemetry_data").insert(data_list).execute()
+            logger.info(f"✓ Inserted {len(data_list)} telemetry records")
         except Exception as e:
-            self.conn.rollback()
             logger.error(f"Error batch inserting telemetry: {e}")
             raise
 
     async def get_device_by_imei(self, imei: str) -> Optional[Dict]:
         """Get device by IMEI."""
         try:
-            cursor = self._get_cursor()
-            cursor.execute(
-                "SELECT * FROM devices WHERE imei = %s LIMIT 1",
-                (imei,)
-            )
-            result = cursor.fetchone()
-            cursor.close()
-            return dict(result) if result else None
+            response = self.client.table("devices").select("*").eq("imei", imei).execute()
+            return response.data[0] if response.data else None
         except Exception as e:
             logger.error(f"Error fetching device by IMEI {imei}: {e}")
             return None
@@ -217,25 +112,15 @@ class DatabaseClient:
     async def get_next_short_device_id(self, protocol: str) -> int:
         """Get next available short_device_id for TFMS90 protocol."""
         try:
-            cursor = self._get_cursor()
-            cursor.execute(
-                """
-                SELECT short_device_id FROM devices
-                WHERE protocol = %s AND short_device_id IS NOT NULL
-                ORDER BY CAST(short_device_id AS INTEGER) DESC
-                LIMIT 1
-                """,
-                (protocol,)
-            )
-            result = cursor.fetchone()
-            cursor.close()
+            # Get all devices with short_device_id for this protocol
+            response = self.client.table("devices").select("short_device_id").eq("protocol", protocol).not_.is_("short_device_id", "null").execute()
 
-            if not result:
+            if not response.data:
                 # First device, start from 100
                 return 100
 
-            # Return max + 1
-            max_id = int(result['short_device_id'])
+            # Find max short_device_id and add 1
+            max_id = max([int(d['short_device_id']) for d in response.data if d.get('short_device_id')])
             return max_id + 1
 
         except Exception as e:
@@ -263,14 +148,6 @@ class DatabaseClient:
         except Exception as e:
             logger.error(f"Error assigning short_device_id: {e}")
             raise
-
-    def __del__(self):
-        """Close connection on cleanup."""
-        try:
-            if hasattr(self, 'conn') and self.conn:
-                self.conn.close()
-        except:
-            pass
 
 
 # Global database client instance
