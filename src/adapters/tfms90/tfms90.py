@@ -140,8 +140,6 @@ class TFMS90Adapter(ProtocolAdapter):
             odometer = float(parts[13]) if len(parts) > 13 and parts[13] else None
 
             io_elements = {
-                "trip_number": parts[4],
-                "short_device_id": parts[3],
                 "hdop": hdop,
                 "fuel_level": fuel,
                 "odometer": odometer,
@@ -187,8 +185,6 @@ class TFMS90Adapter(ProtocolAdapter):
                 heading = float(parts[9]) if len(parts) > 9 and parts[9] else 0.0
 
                 io_elements = {
-                    "trip_number": parts[4],
-                    "short_device_id": parts[3],
                     "event_type": "trip_start",
                     "fuel_level": fuel,
                 }
@@ -222,8 +218,6 @@ class TFMS90Adapter(ProtocolAdapter):
                 heading = float(parts[18]) if len(parts) > 18 and parts[18] and parts[18] != '#' else 0.0
 
                 io_elements = {
-                    "trip_number": parts[4],
-                    "short_device_id": parts[3],
                     "event_type": "trip_end",
                     "start_timestamp": start_timestamp.isoformat(),
                     "end_timestamp": end_timestamp.isoformat(),
@@ -264,8 +258,6 @@ class TFMS90Adapter(ProtocolAdapter):
             event_map = {"HA2": "harsh_acceleration", "HB2": "harsh_braking", "HC2": "harsh_cornering"}
 
             io_elements = {
-                "trip_number": parts[4],
-                "short_device_id": parts[3],
                 "event_type": event_map.get(msg_type, "harsh_event"),
             }
 
@@ -301,8 +293,6 @@ class TFMS90Adapter(ProtocolAdapter):
             longitude = float(parts[10])
 
             io_elements = {
-                "trip_number": parts[4],
-                "short_device_id": parts[3],
                 "event_type": "fuel_fill" if msg_type == "FLF" else "fuel_drain",
                 "fuel_before": fuel_before,
                 "fuel_after": fuel_after,
@@ -334,7 +324,6 @@ class TFMS90Adapter(ProtocolAdapter):
             timestamp = self._parse_timestamp(parts[5]) if len(parts) > 5 else datetime.utcnow()
 
             io_elements = {
-                "short_device_id": parts[3],
                 "status_type": msg_type.lower(),
             }
 
