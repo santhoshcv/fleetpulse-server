@@ -9,11 +9,11 @@ import os
 logger = logging.getLogger(__name__)
 
 # Database connection parameters
-DB_HOST = "aws-0-ap-south-1.pooler.supabase.com"
-DB_PORT = "6543"
+DB_HOST = "db.ypxlpqylmxddrvhasmst.supabase.co"
+DB_PORT = "5432"
 DB_NAME = "postgres"
-DB_USER = "postgres.ypxlpqylmxddrvhasmst"
-DB_PASSWORD = "Test@12345"
+DB_USER = "postgres"
+DB_PASSWORD = "tHinkpad#123A"
 
 
 class DatabaseClient:
