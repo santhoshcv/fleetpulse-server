@@ -56,10 +56,9 @@ class DatabaseClient:
         try:
             data = telemetry_data.copy()
 
-            # Keep io_elements ONLY for TE (trip end) - needed for trip creation trigger
-            # Remove for all other message types to avoid Supabase schema cache issues
-            if data.get('message_type') != 'TE':
-                data.pop('io_elements', None)
+            # Remove io_elements to avoid Supabase schema cache issues
+            # All data is now in top-level columns
+            data.pop('io_elements', None)
 
             logger.info(f"Inserting telemetry: device={data.get('device_id')}, fuel={data.get('fuel_level')}, msg_type={data.get('message_type')}")
             self.client.table("telemetry_data").insert(data).execute()
@@ -75,9 +74,8 @@ class DatabaseClient:
             data_list = []
             for telemetry_data in telemetry_list:
                 data = telemetry_data.copy()
-                # Keep io_elements only for TE messages
-                if data.get('message_type') != 'TE':
-                    data.pop('io_elements', None)
+                # Remove io_elements - all data is in top-level columns
+                data.pop('io_elements', None)
                 data_list.append(data)
 
             self.client.table("telemetry_data").insert(data_list).execute()
