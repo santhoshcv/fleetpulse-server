@@ -54,19 +54,12 @@ class DatabaseClient:
     async def insert_telemetry(self, telemetry_data: Dict):
         """Insert single telemetry record."""
         try:
-            # Clean io_elements: remove fields that don't exist as database columns
-            # Keep only fields that should stay in JSONB
             data = telemetry_data.copy()
-            if data.get('io_elements') and isinstance(data['io_elements'], dict):
-                io_elements = data['io_elements'].copy()
 
-                # Remove fields that Supabase will try to unnest but don't exist as columns
-                # These are stored in io_elements but aren't top-level columns in telemetry_data table
-                fields_to_remove = ['trip_number', 'short_device_id']
-                for field in fields_to_remove:
-                    io_elements.pop(field, None)
-
-                data['io_elements'] = io_elements
+            # For TD messages, remove io_elements entirely - all data is in top-level columns
+            # This avoids Supabase PostgREST schema cache issues
+            if data.get('message_type') == 'TD':
+                data.pop('io_elements', None)
 
             logger.info(f"Inserting telemetry: device={data.get('device_id')}, fuel={data.get('fuel_level')}, msg_type={data.get('message_type')}")
             self.client.table("telemetry_data").insert(data).execute()
@@ -79,19 +72,14 @@ class DatabaseClient:
     async def insert_telemetry_batch(self, telemetry_list: List[Dict]):
         """Batch insert telemetry records."""
         try:
-            # Clean io_elements for each record
             data_list = []
             for telemetry_data in telemetry_list:
                 data = telemetry_data.copy()
-                if data.get('io_elements') and isinstance(data['io_elements'], dict):
-                    io_elements = data['io_elements'].copy()
 
-                    # Remove problematic fields
-                    fields_to_remove = ['trip_number', 'short_device_id']
-                    for field in fields_to_remove:
-                        io_elements.pop(field, None)
+                # For TD messages, remove io_elements entirely
+                if data.get('message_type') == 'TD':
+                    data.pop('io_elements', None)
 
-                    data['io_elements'] = io_elements
                 data_list.append(data)
 
             self.client.table("telemetry_data").insert(data_list).execute()
