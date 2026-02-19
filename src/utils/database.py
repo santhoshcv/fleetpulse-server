@@ -56,10 +56,9 @@ class DatabaseClient:
         try:
             data = telemetry_data.copy()
 
-            # For TD messages, remove io_elements entirely - all data is in top-level columns
-            # This avoids Supabase PostgREST schema cache issues
-            if data.get('message_type') == 'TD':
-                data.pop('io_elements', None)
+            # Remove io_elements to avoid Supabase PostgREST schema cache issues
+            # The trigger uses message_type directly, doesn't need io_elements
+            data.pop('io_elements', None)
 
             logger.info(f"Inserting telemetry: device={data.get('device_id')}, fuel={data.get('fuel_level')}, msg_type={data.get('message_type')}")
             self.client.table("telemetry_data").insert(data).execute()
@@ -75,11 +74,8 @@ class DatabaseClient:
             data_list = []
             for telemetry_data in telemetry_list:
                 data = telemetry_data.copy()
-
-                # For TD messages, remove io_elements entirely
-                if data.get('message_type') == 'TD':
-                    data.pop('io_elements', None)
-
+                # Remove io_elements from all messages
+                data.pop('io_elements', None)
                 data_list.append(data)
 
             self.client.table("telemetry_data").insert(data_list).execute()
