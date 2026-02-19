@@ -61,6 +61,7 @@ class DatabaseClient:
             if data.get('io_elements') and isinstance(data['io_elements'], dict):
                 data['io_elements'] = json.dumps(data['io_elements'])
 
+            logger.info(f"DEBUG AFTER JSON CONVERSION: io_elements type={type(data.get('io_elements'))}, value={data.get('io_elements')[:100] if data.get('io_elements') else None}")
             self.client.table("telemetry_data").insert(data).execute()
         except Exception as e:
             logger.error(f"Error inserting telemetry: {e}")
