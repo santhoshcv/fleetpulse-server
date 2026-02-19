@@ -112,8 +112,8 @@ class TFMS90Adapter(ProtocolAdapter):
         """
         Parse TD (Tracking Data) message.
 
-        Format after split: ['', token, 'TD', dev_id, trip_num, timestamp_hex, lat, lon, speed, heading, sats, fuel, odo, ...]
-        Indices:             0    1      2      3        4           5            6    7     8       9       10    11    12
+        Format after split: ['', token, 'TD', dev_id, trip_num, timestamp_hex, lat, lon, speed, heading, sats, hdop, fuel_level, odometer, ...]
+        Indices:             0    1      2      3        4           5            6    7     8       9       10    11    12          13
         """
         try:
             if len(parts) < 13:
@@ -132,12 +132,17 @@ class TFMS90Adapter(ProtocolAdapter):
             satellites = int(parts[10]) if parts[10] else 0
 
             # Parse IO elements
-            fuel = float(parts[11]) if len(parts) > 11 and parts[11] else None
-            odometer = float(parts[12]) if len(parts) > 12 and parts[12] else None
+            # parts[11] = hdop (NOT fuel — common mapping mistake)
+            # parts[12] = fuel_level (liters)
+            # parts[13] = odometer (meters)
+            hdop = float(parts[11]) if len(parts) > 11 and parts[11] else None
+            fuel = float(parts[12]) if len(parts) > 12 and parts[12] else None
+            odometer = float(parts[13]) if len(parts) > 13 and parts[13] else None
 
             io_elements = {
                 "trip_number": parts[4],
                 "short_device_id": parts[3],
+                "hdop": hdop,
                 "fuel_level": fuel,
                 "odometer": odometer,
             }
@@ -225,6 +230,7 @@ class TFMS90Adapter(ProtocolAdapter):
                     "duration_seconds": duration,
                     "start_fuel": start_fuel,
                     "end_fuel": end_fuel,
+                    "fuel_level": end_fuel,  # current fuel level at trip end (used by gps_locations trigger)
                     "distance_km": distance,
                     "start_latitude": float(parts[14]),
                     "start_longitude": float(parts[15]),
@@ -301,6 +307,8 @@ class TFMS90Adapter(ProtocolAdapter):
                 "fuel_before": fuel_before,
                 "fuel_after": fuel_after,
                 "fuel_amount": fuel_amount,
+                # fuel_level = current level after the event (used by gps_locations trigger)
+                "fuel_level": fuel_after,
             }
 
             return [TelemetryData(

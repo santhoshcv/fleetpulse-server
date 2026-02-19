@@ -54,7 +54,14 @@ class DatabaseClient:
     async def insert_telemetry(self, telemetry_data: Dict):
         """Insert single telemetry record."""
         try:
-            self.client.table("telemetry_data").insert(telemetry_data).execute()
+            import json
+
+            # Convert io_elements dict to JSON string to prevent Supabase client from unnesting it
+            data = telemetry_data.copy()
+            if data.get('io_elements') and isinstance(data['io_elements'], dict):
+                data['io_elements'] = json.dumps(data['io_elements'])
+
+            self.client.table("telemetry_data").insert(data).execute()
         except Exception as e:
             logger.error(f"Error inserting telemetry: {e}")
             raise
@@ -62,8 +69,18 @@ class DatabaseClient:
     async def insert_telemetry_batch(self, telemetry_list: List[Dict]):
         """Batch insert telemetry records."""
         try:
-            self.client.table("telemetry_data").insert(telemetry_list).execute()
-            logger.info(f"Inserted {len(telemetry_list)} telemetry records")
+            import json
+
+            # Convert io_elements dict to JSON string for each record
+            data_list = []
+            for telemetry_data in telemetry_list:
+                data = telemetry_data.copy()
+                if data.get('io_elements') and isinstance(data['io_elements'], dict):
+                    data['io_elements'] = json.dumps(data['io_elements'])
+                data_list.append(data)
+
+            self.client.table("telemetry_data").insert(data_list).execute()
+            logger.info(f"Inserted {len(data_list)} telemetry records")
         except Exception as e:
             logger.error(f"Error batch inserting telemetry: {e}")
             raise
