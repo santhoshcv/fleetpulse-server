@@ -218,6 +218,7 @@ class TFMS90Adapter(ProtocolAdapter):
                 heading = float(parts[18]) if len(parts) > 18 and parts[18] and parts[18] != '#' else 0.0
 
                 io_elements = {
+                    "trip_number": parts[4],  # needed by trip creation trigger
                     "event_type": "trip_end",
                     "start_timestamp": start_timestamp.isoformat(),
                     "end_timestamp": end_timestamp.isoformat(),
