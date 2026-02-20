@@ -341,26 +341,67 @@ class TFMS90Adapter(ProtocolAdapter):
             return []
 
     async def _parse_status(self, parts: List[str], device_id: str, msg_type: str) -> List[TelemetryData]:
-        """Parse HB (Heartbeat), OS3 (Overspeed), or STAT (Status) message."""
+        """
+        Parse HB (Heartbeat), OS3 (Overspeed), or STAT (Status) message.
+
+        HB Format: $,0,HB,<device_id>,<timestamp>,<fuel_level>,<voltage>,<gsm_signal>,<gps_fix>,<lat>,<lon>,<odometer>,<acc_status>,<sleep_mode>,#?
+        Indices:    0  1  2   3           4           5             6          7            8         9     10     11          12            13
+        """
         try:
-            if len(parts) < 8:
-                return []
+            if msg_type == 'HB':
+                # Parse full heartbeat message
+                if len(parts) < 13:
+                    self.logger.warning(f"HB message too short: {len(parts)} parts")
+                    return []
 
-            timestamp = self._parse_timestamp(parts[5]) if len(parts) > 5 else datetime.utcnow()
+                timestamp = self._parse_timestamp(parts[4])
+                fuel_level = float(parts[5]) if parts[5] else None
+                voltage = float(parts[6]) if parts[6] else None
+                latitude = float(parts[9]) if parts[9] else 0.0
+                longitude = float(parts[10]) if parts[10] else 0.0
+                odometer = int(parts[11]) if parts[11] else None
+                acc_status = int(parts[12]) if len(parts) > 12 and parts[12] else 0
 
-            io_elements = {
-                "status_type": msg_type.lower(),
-            }
+                # acc_status: 1 = ignition ON, 0 = ignition OFF
+                ignition_status = bool(acc_status)
 
-            return [TelemetryData(
-                device_id=device_id,
-                timestamp=timestamp,
-                latitude=0.0,
-                longitude=0.0,
-                protocol="tfms90",
-                message_type=msg_type,
-                io_elements=io_elements,
-            )]
+                io_elements = {
+                    "status_type": "heartbeat",
+                    "fuel_level": fuel_level,
+                    "battery_voltage": voltage,
+                    "odometer": odometer,
+                }
+
+                return [TelemetryData(
+                    device_id=device_id,
+                    timestamp=timestamp,
+                    latitude=latitude,
+                    longitude=longitude,
+                    protocol="tfms90",
+                    message_type=msg_type,
+                    ignition=ignition_status,
+                    io_elements=io_elements,
+                )]
+            else:
+                # OS3, STAT - minimal parsing
+                if len(parts) < 8:
+                    return []
+
+                timestamp = self._parse_timestamp(parts[5]) if len(parts) > 5 else datetime.utcnow()
+
+                io_elements = {
+                    "status_type": msg_type.lower(),
+                }
+
+                return [TelemetryData(
+                    device_id=device_id,
+                    timestamp=timestamp,
+                    latitude=0.0,
+                    longitude=0.0,
+                    protocol="tfms90",
+                    message_type=msg_type,
+                    io_elements=io_elements,
+                )]
 
         except Exception as e:
             self.logger.error(f"Error parsing {msg_type} message: {e}")
