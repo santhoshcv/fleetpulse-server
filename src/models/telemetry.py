@@ -43,6 +43,7 @@ class TelemetryData:
             "heading": self.heading,
             "satellites": self.satellites,
             "fuel_level": fuel_level,
+            "ignition": self.ignition,
             "protocol": self.protocol,
             "message_type": self.message_type,
             "io_elements": self.io_elements,

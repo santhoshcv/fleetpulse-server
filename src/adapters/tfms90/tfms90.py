@@ -132,17 +132,33 @@ class TFMS90Adapter(ProtocolAdapter):
             satellites = int(parts[10]) if parts[10] else 0
 
             # Parse IO elements
-            # parts[11] = hdop (NOT fuel — common mapping mistake)
+            # parts[11] = hdop
             # parts[12] = fuel_level (liters)
             # parts[13] = odometer (meters)
+            # parts[14] = status_flags (hex) - contains ignition/ACC status
+            # parts[17] = battery_voltage
             hdop = float(parts[11]) if len(parts) > 11 and parts[11] else None
             fuel = float(parts[12]) if len(parts) > 12 and parts[12] else None
             odometer = float(parts[13]) if len(parts) > 13 and parts[13] else None
+
+            # Parse status flags (hex) for ignition status
+            # Bit 0 of status_flags = ACC/Ignition (1 = ON, 0 = OFF)
+            ignition_status = None
+            if len(parts) > 14 and parts[14]:
+                try:
+                    status_flags = int(parts[14], 16)  # Convert hex to int
+                    ignition_status = bool(status_flags & 0x01)  # Check bit 0
+                except (ValueError, TypeError):
+                    pass
+
+            # Battery voltage
+            battery_voltage = float(parts[17]) if len(parts) > 17 and parts[17] else None
 
             io_elements = {
                 "hdop": hdop,
                 "fuel_level": fuel,
                 "odometer": odometer,
+                "battery_voltage": battery_voltage,
             }
 
             telemetry = TelemetryData(
@@ -153,6 +169,7 @@ class TFMS90Adapter(ProtocolAdapter):
                 speed=speed,
                 heading=heading,
                 satellites=satellites,
+                ignition=ignition_status,
                 protocol="tfms90",
                 message_type="TD",
                 io_elements=io_elements,
