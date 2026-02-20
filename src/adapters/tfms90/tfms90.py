@@ -154,11 +154,18 @@ class TFMS90Adapter(ProtocolAdapter):
             # Battery voltage
             battery_voltage = float(parts[17]) if len(parts) > 17 and parts[17] else None
 
+            # Extract token and IDs for ACK response
+            token = parts[1] if len(parts) > 1 else "0"
+            short_device_id = parts[3] if len(parts) > 3 else ""
+            trip_number = parts[4] if len(parts) > 4 else ""
+
             io_elements = {
                 "hdop": hdop,
                 "fuel_level": fuel,
                 "odometer": odometer,
                 "battery_voltage": battery_voltage,
+                "trip_number": trip_number,
+                "short_device_id": short_device_id,
             }
 
             telemetry = TelemetryData(
