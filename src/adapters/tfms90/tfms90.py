@@ -219,6 +219,7 @@ class TFMS90Adapter(ProtocolAdapter):
                     latitude=latitude,
                     longitude=longitude,
                     heading=heading,
+                    ignition=True,  # Trip start = engine ON
                     protocol="tfms90",
                     message_type=msg_type,
                     io_elements=io_elements,
@@ -261,6 +262,7 @@ class TFMS90Adapter(ProtocolAdapter):
                     latitude=latitude,
                     longitude=longitude,
                     heading=heading,
+                    ignition=False,  # Trip end = engine OFF
                     protocol="tfms90",
                     message_type=msg_type,
                     io_elements=io_elements,
