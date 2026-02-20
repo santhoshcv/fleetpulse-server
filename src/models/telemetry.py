@@ -17,6 +17,7 @@ class TelemetryData:
     speed: Optional[float] = None
     heading: Optional[float] = None
     satellites: Optional[int] = None
+    ignition: Optional[bool] = None
     protocol: str = "unknown"
     message_type: Optional[str] = None
     io_elements: Optional[Dict] = None
