@@ -200,12 +200,17 @@ class ConnectionHandler:
     async def _register_tfms90_device(self, imei: str, short_id: int, login_data: dict):
         """Register TFMS90 device with IMEI and short_device_id."""
         try:
-            # Check if device with this IMEI already exists
+            # Check if device with this IMEI already exists (pre-registered in portal)
             existing_device = await db_client.get_device_by_imei(imei)
 
+            if not existing_device:
+                # Device not pre-registered - reject connection
+                self.logger.error(f"TFMS90 device with IMEI={imei} not found in database. Device must be pre-registered in portal before connecting.")
+                return
+
+            # Update existing device with short_device_id and login details
             device_data = {
                 "device_id": f"TFMS90_{short_id}",
-                "imei": imei,
                 "short_device_id": short_id,
                 "protocol": self.protocol,
                 "firmware_version": login_data.get('firmware_version'),
@@ -214,12 +219,10 @@ class ConnectionHandler:
                 "is_active": True,
             }
 
-            if not existing_device:
-                # New device
-                device_data["created_at"] = datetime.utcnow().isoformat()
-                self.logger.info(f"Registering new TFMS90 device: IMEI={imei}, short_id={short_id}")
-
-            await db_client.upsert_device(device_data)
+            # Update by UUID id (not by device_id, since device_id is changing)
+            device_uuid = existing_device['id']
+            self.logger.info(f"Updating existing TFMS90 device: IMEI={imei}, UUID={device_uuid}, short_id={short_id}")
+            await db_client.update_device_by_uuid(device_uuid, device_data)
 
         except Exception as e:
             self.logger.error(f"Error registering TFMS90 device {imei}: {e}")

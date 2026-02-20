@@ -41,6 +41,15 @@ class DatabaseClient:
             logger.error(f"Error upserting device: {e}")
             raise
 
+    async def update_device_by_uuid(self, device_uuid: str, device_data: Dict):
+        """Update device by UUID id."""
+        try:
+            self.client.table("devices").update(device_data).eq("id", device_uuid).execute()
+            logger.info(f"Device {device_uuid} updated")
+        except Exception as e:
+            logger.error(f"Error updating device {device_uuid}: {e}")
+            raise
+
     async def update_device_last_seen(self, device_id: str):
         """Update device last_seen timestamp."""
         from datetime import datetime
